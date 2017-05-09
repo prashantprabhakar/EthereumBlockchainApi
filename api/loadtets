@@ -1,0 +1,4 @@
+loadtest http://localhost:7000/eth/checkEthBalance -T "application/x-www-form-urlencoded" -H "application/x-www-form-urlencoded" -m "POST" -P '"accountAddress":"0x62720366ef403c9891e2bfbd5358ee3c8a57b113"' -n 1
+
+
+loadtest http://localhost:7000/eth/checkEthBalance -T "text/plain" -P '{"acountAddress":"0x62720366ef403c9891e2bfbd5358ee3c8a57b113"}' 

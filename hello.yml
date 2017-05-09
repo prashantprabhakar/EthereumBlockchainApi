@@ -1,0 +1,5 @@
+config:
+  target: "http://localhost:7000/eth/checkEthBalance"
+  post:
+    url: "http://localhost:7000/eth/checkEthBalance"
+    body: "name=hassy&occupation=software%20developer"
