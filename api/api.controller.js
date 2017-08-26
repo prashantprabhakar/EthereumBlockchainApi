@@ -26,42 +26,14 @@ exports.checkEthBalance = function(req, res) {
 	console.log("check balanace");
 	console.log(req.body);
 	var accountAddr = req.body.accountAddress;
-	//var accountAddr = "0x62720366ef403c9891e2bfbd5358ee3c8a57b113";
 	if(isAddress(accountAddr)==false){
 		console.log("This address is not valid");
-		//return res.json({error:true ,  message: "Invalid address"});
 		return res.json({"success":"false","data":[{"message":"Inavlid address"}]});
 
 	}
 	var ethBalance=web3.eth.getBalance(accountAddr).toNumber(); 
 	return res.json({"success":"true","data":[{"balance": ethBalance}]});
-	//return res.json({error:"false", balance: ethBalanceethBalance, message:"Success"});
-	console.log(ethBalance);
 }
-
-
-// this is just giving "Invalid address" response of address is wrong
-/*exports.checkEthBalance = function(req, res) {
-	console.log("Inside check ether balanace");
-	var accountAddr = req.body.accountAddress;
-
-	web3.eth.getBalance(accountAddr, function(err,resp){
-		console.log("Errorrr "+err);
-		console.log("Resppp "+resp);
-		if(err){
-			console.log("Error is: "+err)
-		}
-		else{
-			console.log("Response is: "+resp)
-			var ethBalance = resp.toNumber();
-			return res.json({"success":"true","data":[{"balance": ethBalance}]});
-		}
-	})
-}*/
-
-
-
-
 
 exports.checkCoinBalance = function(req, res) {
 	console.log("check balanace");
@@ -74,12 +46,10 @@ exports.checkCoinBalance = function(req, res) {
 	var coinBalance=contract.balanceOf(accountAddr).toNumber(); 	    		
 	console.log(coinBalance);
 	return res.json({"success":"true","data":[{balance: coinBalance}]});
-	//return "success";
 }
 
 
 exports.transferEther = function(req, res) {
-	console.log("Inside transfer Ether function");
 	var to=req.body.recipientAddress;
 	var from= req.body.senderAddress;
 	var amount=req.body.transferAmount;
@@ -89,7 +59,6 @@ exports.transferEther = function(req, res) {
     if(isAddress(from)==false){
     	console.log("Inavlid Sender's address");
     	return res.json({"success":"false",data:[{"message":"Inavlid Sender's address"}]});
-
     }
 
 	// verify reciever's address
@@ -106,10 +75,10 @@ exports.transferEther = function(req, res) {
 			return res.json({"success":"false","data":[{"message":"Incorrect Password"}]});
 		}
 		else{
-				//web3.eth.sendTransaction({to:to, from:from, value:web3.toWei(amount,"ether")},function( _erro,_respo){
-					web3.eth.sendTransaction({to:to, from: from, value:web3.toWei(amount,"ether")}, function(err1, resp1){
-						if(err1){
-							console.log("Error is "+err1);
+			web3.eth.sendTransaction({to:to, from: from, value:web3.toWei(amount,"ether")},
+				    function(err1, resp1){
+					if(err1){
+						console.log("Error is "+err1);
 						// check if error is due to low balance
 						if(err1=="Error: Insufficient funds for gas * price + value"){
 							return res.json({success:"false","data":[{"message":"Insufficient funds"}]})
@@ -128,12 +97,10 @@ exports.transferEther = function(req, res) {
 			});// send Transaction callback ends here;
 				}
 	}); // unlock accnt callback ends here
-
 }
 
 
 exports.transferCoin = function(req, res) {
-	console.log("transfer");
 	var to=req.body.recipientAddress;
 	var from= req.body.senderAddress;
 	var amount=req.body.amount;
@@ -148,248 +115,321 @@ exports.transferCoin = function(req, res) {
 	if(isAddress(to)==false){
 		console.log("Inavlid Recipient's address");
 		return res.json({"success":"false","data":[{"message":"Inavlid Recipient's address"}]});
-
 	}
 
 		//web3.personal.unlockAccount(from,passphrase);
-		web3.personal.unlockAccount(from,passphrase, function(_error,_resp){
+	web3.personal.unlockAccount(from,passphrase,
+	    function(_error,_resp){
 			if(_error){
 				console.log("Error");
 				return res.json({"success":"false","data":[{"message":"Incorrect Password"}]});
 			}
 			else{
 				var callData=contract.transfer.getData(to,amount);
-				var estimatedGas=checkThrow(from,callData);
+				var gasPrice = web3.eth.gasPrice.toNumber();
+				var estimatedGas=checkThrow(from,callData,gasPrice);
+				var ethBalance = web3.eth.getBalance(from).toNumber();
+				var estimatedEther = estimatedGas ? (estimatedGas * gasPrice) : 0;
 				console.log("Estimated Gas="+estimatedGas);
+				if(estimatedEther && ethBalance < estimatedEther){
+                   console.log("Ether balance is too low.");
+                   return res.json({"success":false,"data":[{"message":"Could not estimate gas. There are not enough funds in the account, or the receiving contract address would through an error."}]});
+                }
+                else if (balance < amount) {
+                  console.log("Coin balance is too low.", balance, amount);
+                  return res.json({"success":false,"data":[{"message":"There are not enough token in the account, Please recharge your address and try again."}]});
+                }
 				if(!estimatedGas)
 				{
 					console.log("Intrinsic gas low");
 					return res.json({"success":"false","data":[{"message":"Intrinsic Gas too low"}]});
 				}
 				else{
-
-					var tx=contract.transfer(to, amount, {from: from});
+					var tx=contract.transfer(to, amount, {from: from, gas:(estimatedGas+100000), gasPrice:gasPrice});
 					console.log("Transaction hash is: "+tx+" . Now we'll save it to DB");
 					saveTransaction(tx);
 					//watchTransaction();
 					return res.json({"success":"true", "data":[{"transactionHash":tx}]});
+				}// estimates gas ends
+			}
+		})
+} // function transfer coin ends here
+
+exports.mintToken = function(req, res){
+	var to = req.body.recipientAddress;
+	var amount = req.body.amount;
+	var passphrase = req.body.passphrase;
+	contract.owner(function(_err, _resp1){
+		if(_err){
+			res.json({"success":"false","data":[{"message":"Error in getting owner's address"}]});
+			return res;
+		}
+		else{
+			var fromAddress = _resp1;
+			// check if addresses are valid
+			if(isAddress(fromAddress)==false){
+				console.log("Inavlid Coinbase address");
+				res.json({"success":"false","data":[{"message":"Inavlid Coinbase address"}]});
+				return res;
+			}
+			if(isAddress(toAddress)==false){
+				console.log("Inavlid Recipient's address");
+				res.json({"success":"false","data":[{"message":"Inavlid Recipient's address"}]});
+				return res;
+			}			
+			web3.personal.unlockAccount(fromAddress,passphrase, function(_error,_resp){
+				if(_error){
+					console.log("Error");
+					console.log(_error);
+					res.json({"success":"false","data":[{"message":"Incorrect Password"}]});
+					return res;
+				}
+				else{
+					var callData=contract.mintToken.getData(toAddress,mintAmount);
+					var gasPrice = web3.eth.gasPrice.toNumber();
+					var estimatedGas=checkThrow(fromAddress,callData,gasPrice);
+					var ethBalance = web3.eth.getBalance(fromAddress).toNumber();
+					var estimatedEther = estimatedGas ? (estimatedGas * gasPrice) : 0;
+					console.log("Estimated Gas="+estimatedGas);
+					if(estimatedEther && ethBalance < estimatedEther){
+	                   console.log("Ether balance is too low.");
+	                   return res.json({"success":false,"data":[{"message":"Could not estimate gas. There are not enough funds in the account, or the receiving contract address would through an error."}]});
+	                }
+	                else if (balance < amount) {
+	                  console.log("Coin balance is too low.", balance, amount);
+	                  return res.json({"success":false,"data":[{"message":"There are not enough token in the account, Please recharge your address and try again."}]});
+	                }
+					else if(!estimatedGas)
+					{
+						console.log("Intrinsic gas low");
+						res.json({"success":"false","data":[{"message":"Intrinsic Gas too low"}]});
+						return res;
+					}
+					else{
+
+						var tx=contract.mintToken(toAddress, mintAmount, {from: fromAddress, gas:(estimatedGas+100000), gasPrice:gasPrice});
+						console.log("Transaction hash is: "+tx+" . Now we'll save it to DB");
+						saveTransaction(tx);
+						//watchTransaction();
+						res.json({"success":"true", "data":[{"transactionHash":tx}]});
+						return res;
+					}// estimates gas ends
+				}
+			});
+		}
+	})
+}
+
+exports.setPrices = function(req, res) {
+	console.log("setting prices");
+	var sellPrice =req.body.sellPrice;
+	var buyPrice = req.body.buyPrice;
+	var passphrase=req.body.passphrase;
+	var from;
+	contract.owner(function(err, _res){
+		if(err) {
+			console.log("Error in getting contract owner");
+		}
+		else{
+			var from = _res;			
+			web3.personal.unlockAccount(from,passphrase, function(_error,_resp){
+				if(_error){
+					console.log("Error");
+					console.log(_error);
+					res.json({"success":"false","data":[{"message":"Incorrect Password"}]});
+					return res;
+				}
+				else{
+					// test this
+					var callData=contract.setPrice.getData(sellPrice,buyPrice);
+					var gasPrice = web3.eth.gasPrice.toNumber();
+					var estimatedGas=checkThrow(from,callData,gasPrice);
+					var ethBalance = web3.eth.getBalance(from).toNumber();
+					var estimatedEther = estimatedGas ? (estimatedGas * gasPrice) : 0;
+					console.log("Estimated Gas="+estimatedGas);
+					if(estimatedEther && ethBalance < estimatedEther){
+	                   console.log("Ether balance is too low.");
+	                   return res.json({"success":false,"data":[{"message":"Could not estimate gas. There are not enough funds in the account, or the receiving contract address would through an error."}]});
+	                }	                
+					if(!estimatedGas)
+					{
+						console.log("Intrinsic gas low");
+						res.json({"success":"false","data":[{"message":"Intrinsic Gas too low"}]});
+						return res;
+					}
+					else{
+						var tx=contract.setPrices(sellPrice, buyPrice, {from: from, gas:(estimatedGas+100000), gasPrice:gasPrice});
+						console.log("Transaction hash is: "+tx+" . Now we'll save it to DB");
+						saveTransaction(tx);
+						//watchTransaction();
+						res.json({"success":"true", "data":[{"transactionHash":tx}]});
+						return res;
+					}// estimates gas ends
+				}
+			});
+		}
+	});
+} // function ends here
+
+// Sell Coin
+exports.sellCoin = function(req, res){
+	var fromAddress = req.body.from;
+	var amount=req.body.amount;
+	var passphrase = req.body.passphrase;
+	if(isAddress(fromAddress)==false){
+		console.log("Inavlid Senders address");
+		res.json({"success":"false","data":[{"message":"Inavlid Senders address"}]});
+		return res;
+	}	
+	web3.personal.unlockAccount(fromAddress,passphrase, function(_error,_resp){
+		if(_error){
+			console.log("Error");
+			console.log(_error);
+			res.json({"success":"false","data":[{"message":"Incorrect Password"}]});
+			return res;
+		}
+		else{
+			var callData=contract.sell.getData(amount);
+			var gasPrice = web3.eth.gasPrice.toNumber();
+			var estimatedGas=checkThrow(fromAddress,callData,gasPrice);
+			var ethBalance = web3.eth.getBalance(fromAddress).toNumber();
+			var estimatedEther = estimatedGas ? (estimatedGas * gasPrice) : 0;
+			console.log("Estimated Gas="+estimatedGas);
+			if(estimatedEther && ethBalance < estimatedEther){
+               console.log("Ether balance is too low.");
+               return res.json({"success":false,"data":[{"message":"Could not estimate gas. There are not enough funds in the account, or the receiving contract address would through an error."}]});
+            }
+            else if (balance < amount) {
+              console.log("Coin balance is too low.", balance, amount);
+              return res.json({"success":false,"data":[{"message":"There are not enough token in the account, Please recharge your address and try again."}]});
+            }
+			if(!estimatedGas)
+			{
+				console.log("Intrinsic gas low");
+				res.json({"success":"false","data":[{"message":"Intrinsic Gas too low"}]});
+				return res;
+			}
+			else{
+				var tx=contract.sell(amount, {from: fromAddress, gas:(estimatedGas+100000), gasPrice:gasPrice});
+				console.log("Transaction hash is: "+tx+" . Now we'll save it to DB");
+				saveTransaction(tx);
+				//watchTransaction();
+				res.json({"success":"true", "data":[{"transactionHash":tx}]});
+				return res;
 			}// estimates gas ends
 		}
+	});
+}
 
-	})
-	} // function transfer coin ends here
-
+// Buy Coin
+exports.buyCoin = function(req, res){
+	var fromAddress = req.body.from;
+	var amount=web3.toWei(req.body.ether,"ether");
+	var passphrase = req.body.passphrase;
+	if(isAddress(fromAddress)==false){
+		console.log("Inavlid Coinbase address");
+		res.json({"success":"false","data":[{"message":"Inavlid Coinbase address"}]});
+		return res;
+	}
+	//check if from Address has ethers
+	var eth = web3.eth.getBalance(fromAddress).toNumber();
+	if(eth<amount){
+		res.json({"success":"false","data":[{"message":"Low ether balance"}]});
+		return res;
+	}
+	web3.personal.unlockAccount(fromAddress,passphrase, function(_error,_resp){
+		if(_error){
+			console.log("Error");
+			console.log(_error);
+			res.json({"success":"false","data":[{"message":"Incorrect Password"}]});
+			return res;
+		}
+		else{
+			var callData=contract.buy.getData();
+			var gasPrice = web3.eth.gasPrice.toNumber();
+			var estimatedGas=checkThrow(fromAddress,callData,gasPrice);
+			var ethBalance = web3.eth.getBalance(fromAddress).toNumber();
+			var estimatedEther = estimatedGas ? (estimatedGas * gasPrice) : 0;
+			console.log("Estimated Gas="+estimatedGas);
+			if(estimatedEther && ethBalance < estimatedEther){
+               console.log("Ether balance is too low.");
+               return res.json({"success":false,"data":[{"message":"Could not estimate gas. There are not enough funds in the account, or the receiving contract address would through an error."}]});
+            }            
+			if(!estimatedGas)
+			{
+				console.log("Intrinsic gas low");
+				res.json({"success":"false","data":[{"message":"Intrinsic Gas too low"}]});
+				return res;
+			}
+			else{
+				var tx=contract.buy({from:fromAddress, value:amount, gas:(estimatedGas+100000), gasPrice:gasPrice});
+				console.log("Transaction hash is: "+tx+" . Now we'll save it to DB");
+				saveTransaction(tx);
+				//watchTransaction();
+				res.json({"success":"true", "data":[{"transactionHash":tx}]});
+				return res;
+			}// estimates gas ends
+		}
+	});
+}
 
 	
-	// saving transaction details to database.
-	function saveTransaction(tx){
-		TransactionService.saveTransaction(tx, function(resp){
-			if(!resp.error){
-				console.log("Resp from db : "+JSON.stringify(resp));
-			//return res.json({"success":false,"data":[{"message":"Inavlid Sender's address"}]});	
+// saving transaction details to database.
+function saveTransaction(tx){
+	TransactionService.saveTransaction(tx, function(resp){
+		if(!resp.error){
+			console.log("Resp from db : "+JSON.stringify(resp));
 		}
 		else{
 			console.log("transaction could not be saved");
-			//return res.json({error:"true","message":""})
-			//return res.json({"success":false,"data":[{"message":"Inavlid Sender's address"}]});
 		}
 	});
-	} // save Transaction ends here
+} // save Transaction ends here
 	
 
-
-// function check transaction status
-/*exports.checkTransactionStatus = function(req, res) {
+// checck transaction status without DB.
+exports.checkTransactionStatus = function(req,res){
 	var transactionId = req.body.transactionid;
 	console.log(transactionId);
-	//check if transaction Hash is correct
-	try {
- 		 web3.eth.getTransactionReceipt(transactionId);
- 		 //check transaction id in database
-		Transaction.find({transactionid : transactionId}, function(err, transaction) {
-		console.log(transaction);
-			// if transaction is found in database : returm it's status
-			if(transaction.length >0){
-				console.log("Transaction found in database");
-				return res.json({"success":"true","data":[{"transactionStatus":transaction[0].status}]});
-			}
-			// if transaction not found in database: look for transaction status from blockchain
-			else{
-				var blockNumber = web3.eth.getTransaction(transactionId).blockNumber;
-				if(blockNumber == null){
-					return res.json({"success":"true", "data":[{"transactionStatus":"Pending"}]});
-				}
-				else{
-					return res.json({"success":"true", "data":[{"transactionStatus":"Success"}]});
-				}
-			}
-			
-		});
-		}
-	catch(e) {
-  		 console.log("invalid tx receipt: " + e);
-  		 return res.json({"success":"false","data":[{"message":"Incorrect transaction hash"}]});
-
-		}
-}
-*/
-
-
-// checck transaction status without DB.
-	exports.checkTransactionStatus = function(req,res){
-		var transactionId = req.body.transactionid;
-		console.log(transactionId);
-		try{
-			var txReciept = web3.eth.getTransactionReceipt(transactionId);
-			if(txReciept == null || txReciept == undefined)
-				return res.json({"success":"true", "data":[{"transactionStatus":"Pending"}]});
-			else
-				return res.json({"success":"true", "data":[{"transactionStatus":"Pending"}]});
-			}
-		catch(e) {
-  		 console.log("invalid tx receipt: " + e);
-  		 return res.json({"success":"false","data":[{"message":"Incorrect transaction hash"}]});
-
-		}	
-
-	}
-
-
-	// this is working code
-	/*exports.checkTransactionStatus= function(req, res){
-		var transactionId = req.body.transactionid;
-		console.log(transactionId);
-		var blockNumber = web3.eth.getTransaction(transactionId).blockNumber;
-		if(blockNumber == null )
+	try{
+		var txReciept = web3.eth.getTransactionReceipt(transactionId);
+		if(txReciept == null || txReciept == undefined)
 			return res.json({"success":"true", "data":[{"transactionStatus":"Pending"}]});
 		else
-			return res.json({"success":"true", "data":[{"transactionStatus":"Success"}]});
-		console.log(obj);
-		/*var status = obj[transactionId];
-		console.log(status);
-		return res.json({"success":"true", data:[{"transactionStatus":status}]})*/
-	//}
-			}
-
-
-
-
-/*
-function watchTransaction(tx){
-	console.log("Transaction ID : "+tx);
-	contract.Transfer(function(err,result){
-		if(!err){
-			if(result.transactionHash==tx){
-				console.log("success");
-				Transaction.findOne({transactionid : tx} , function(err, transaction) {
-					console.log("Trans updating : "+JSON.stringify(transaction));
-					if(err){
-						return "Error";
-					}
-					if(transaction != null && transaction != undefined){
-						transaction.update({status : "success"}, function(_err, _resp) {
-							return "Status updated";
-						});
-					}
-				});				
-			}
+			return res.json({"success":"true", "data":[{"transactionStatus":"Pending"}]});
 		}
-	});
+	catch(e) {
+    	console.log("invalid tx receipt: " + e);
+		return res.json({"success":"false","data":[{"message":"Incorrect transaction hash"}]});
+	}	
 }
-*/
 
-
-// watching transaction v2
-// watches transaction based on events. // depends on contract code
-// the function needs to be executed continuously
-// not yet tested
-/*function watchTransaction(){
-	console.log("Watching tx");
-	contract.Transfer(function(error, resp){
-		if(error){
-			console.log("Error in watching transaction");
-		}
-		else if (resp.blockNumber != null){  // perfom any operation only if transaction is  mined
-			var tx= resp.transactionHash;
-				console.log("transaction that is been watched is: "+tx);
-				Transaction.findOne({transactionid:tx},function(_err, _resp){
-					if(_err){
-						console.log("No matching tx found");
-					}
-					if(_resp != null && _resp != undefined){
-						Transaction.update({transactionid:tx}, {status:"Success"},function(_err1, _resp1){
-							console.log("Transaction: "+tx+" status updated succesfully." )
-						})
-					}
-
-		}) // tx.find one ends here
-
-	} // else ends here
-
-})
-}*/
-
-
-
-// another approach to checkTransaction status - V3
-// this function will update status fo all pending transactions. You can call this function after every n seconds and it will update the db.
-function watchTransaction(){	
+// this function will update status fo all pending transactions. 
+//You can call this function after every n seconds and it will update the db.
+function watchTransaction(){
 	Transaction.find({"status":"PENDING"}, function(err, res){
 		if(!err){
-			//console.log(res);
-
-			//for(var tx in res.transactionid){
-				for ( var i=0; i < res.length; i++){
-					var tx= res[i].transactionid;
-					console.log("tx is :"+tx);
+			for ( var i=0; i < res.length; i++){
+				var tx= res[i].transactionid;
+				console.log("tx is :"+tx);
 				// performn this for each trannsaction in pending pool
 				var blockNumber = web3.eth.getTransaction(tx).blockNumber;
 				console.log("Block no= "+blockNumber);
 				//if(blockNumber- web3.eth.blockNumber > 0){
-					if(blockNumber!= null){
+				if(blockNumber!= null){
 				// make status to confirmed
-				Transaction.update({transactionid:tx}, {status:"Success"},function(_err1, _resp1){
+					Transaction.update({transactionid:tx}, {status:"Success"},function(_err1, _resp1){
 					console.log("Transaction: "+tx+" status updated succesfully." )
-				})
-			}
-		}  // for each ends here
-
-	}
-})
+					})
+				}
+			}  // for each ends here
+		}
+	})
 } // watch transaction ends here*/
 
 
 // calling watch Transaction function every 13 seconds
 var interval = setInterval(watchTransaction, 13000);
-
-
-/*var intervalID = setInterval(function(){
-	Transaction.find({"status":"PENDING"}, function(err, res){
-		if(!err){
-			console.log(res);
-
-			//for(var tx in res.transactionid){
-				for ( var i=0; i < res.length; i++){
-					var tx= res[i].transactionid;
-					console.log("tx is :"+tx);
-				// performn this for each trannsaction in pending pool
-				var blockNumber = web3.eth.getTransaction(tx).blockNumber;
-				console.log("Block no= "+blockNumber);
-				//if(blockNumber- web3.eth.blockNumber > 0){
-					if(blockNumber!= null){
-				// make status to confirmed
-				Transaction.update({transactionid:tx}, {status:"Success"},function(_err1, _resp1){
-					console.log("Transaction: "+tx+" status updated succesfully." )
-				})
-			}
-		}  // for each ends here
-
-	}
-})
-}, 60000);*/
-
-
-
 
 
 exports.createNewAccount = function (req, res){
@@ -400,10 +440,8 @@ exports.createNewAccount = function (req, res){
 		}
 		else{
 			return res.json({"success":"false","data":[{accountAddress:_res}]});
-			//return res.json({"success":"true","data":[{accountAddress:accountAddress}]});
 		}
 	});
-	//return res.json({error : false , "message" : accountAddress});
 }
 
 var isAddress = function (address) {
@@ -420,7 +458,6 @@ var isAddress = function (address) {
     }
 }
 
-
 var isChecksumAddress = function (address) {
     // Check each case
     address = address.replace('0x','');
@@ -434,53 +471,14 @@ var isChecksumAddress = function (address) {
     return true;
 }
 
+// function checks if contract function executes properly or throws
+function checkThrow(frm,callData,gasPrice){
+	var estimatedGas=web3.eth.estimateGas({from:frm,to:contractAddress,data:callData, gasPrice : gasPrice});
+	console.log(estimatedGas);
+	if(estimatedGas==90000){
+		//alert("intrinsic gas too low");
+		return false;
+	}
 
-	// function checks if contract function executes properly or throws
-	function checkThrow(frm,callData){
-		var estimatedGas=web3.eth.estimateGas({from:frm,to:contractAddress,data:callData});
-		console.log(estimatedGas);
-		if(estimatedGas==50000000){
-    		//alert("intrinsic gas too low");
-    		return false;
-    	}
-
-    	else return estimatedGas;
-    }
-
-
-    /*exports.checkSendTransaction = function checkTransaction(req, resp){
-    	web3.personal.unlockAccount(web3.eth.accounts[1],"password")
-    	web3.eth.sendTransaction({to:web3.eth.accounts[0], from: web3.eth.accounts[1], value:web3.toWei(10998075160000000000000,"ether")}, function(err1, resp1){
-    		console.log(err1);
-    		if(err1){
-    			console.log("error");
-    		}
-    		else{
-    			console.log(resp1);
-    		}
-    	});
-    }*/
-
-
-	// just to test speed of node api. This functiona is taking  60 , 19, 11, 12ms   
-	/*exports.sayMyName= function sayMyName(req, resp){
-		var name = req.body.name;
-		return resp.json({"Name":name})
-	}*/
-
-
-   /*// check timeout
-   exports.multiply =  function multiply(req, resp){
-   		var a = req.body.a;
-   		while(a<1000000)
-   		{
-   			var b=0;
-   			while(b<100000)
-   			{
-   				b++;
-   			}
-   			a++;
-   		}
-   		return resp.json({"Value":a});
-   	}*/
-
+	else return estimatedGas;
+}
